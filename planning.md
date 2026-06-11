@@ -55,11 +55,22 @@ All sources are r/UTAustin threads (post + top comments), saved as plain-text fi
      numbers fit the structure of your documents.
      A review-heavy corpus warrants different chunking than a long FAQ. -->
 
-**Chunk size:**
+**Chunk size:** Structure-aware: one chunk per comment (and one per post body), capped at **1,000 characters**. Comments longer than the cap are split at sentence boundaries.
 
-**Overlap:**
+**Overlap:** **100 characters**, applied only when a long comment is split across chunks. No overlap between separate comments — they are independent opinions from different people, and blending them would pollute both embeddings.
 
 **Reasoning:**
+
+My documents are not continuous prose — they are Reddit threads where each comment is a self-contained opinion from one person, delimited by `[score N]` markers. That structure dictates the strategy:
+
+- **Chunk by comment, not by fixed window.** A fixed 500-character window would regularly cut a comment in half and glue the tail of one person's opinion to the head of another's. Since each comment is already a natural semantic unit, the `[score N]` markers are the correct split points. Sizes vary (one-liners up to ~1,500-char stories), and that's fine — retrieval quality matters more than uniform size.
+- **Prepend thread context to every chunk.** Each chunk is prefixed with the thread title and category (e.g. `[Skyloft review — is it a good place to live | review]`). This is critical: a comment like "walls are thin as f***, generally a loud place" never names the building — the building name only appears in the post title. Without this prefix, a query like "what do residents say about 26 West?" could never match that chunk.
+- **Cap at 1,000 characters** because all-MiniLM-L6-v2 truncates input at 256 tokens (~1,000 chars); anything past the cap would be silently invisible to search. The 100-char overlap means a fact straddling a split point survives intact in at least one chunk.
+- **Preprocessing:** the metadata header (title, source URL, post date, category) is stripped from the chunk text and stored as ChromaDB metadata instead, so source attribution survives without diluting the embedding.
+
+Expected scale: 237 comments + 13 post bodies ≈ **~250 chunks** (a few long comments split into two).
+
+How I'd detect a bad choice: chunks too small → retrieved results are contextless one-liners ("This!", "Thank you!") that the LLM can't use; chunks too large → a single chunk mixes opinions about two different buildings and retrieval returns plausible-looking but mistargeted context.
 
 ---
 
@@ -71,11 +82,16 @@ All sources are r/UTAustin threads (post + top comments), saved as plain-text fi
      would you weigh in choosing a different embedding model — context length, multilingual
      support, accuracy on domain-specific text, latency? -->
 
-**Embedding model:**
+**Embedding model:** `all-MiniLM-L6-v2` via `sentence-transformers`, stored in a persistent ChromaDB collection with cosine similarity. My chunks are short, opinionated, conversational English — exactly the kind of text MiniLM is trained on — and it runs locally, free, and fast (~250 chunks embed in seconds). Its 256-token input limit is the reason for the 1,000-character chunk cap above.
 
-**Top-k:**
+**Top-k:** **5**. Out of ~250 chunks, that's enough to give the LLM multiple independent opinions without drowning it in noise. Several of my eval questions are comparisons ("Riverside with a car vs West Campus without") or multi-thread topics (lease timing spans documents 08, 10, and 11) — with k=3 the LLM might only see one side of a debate. With k=8+, low-information chunks ("thank you!", score-1 replies) start reaching the context and dilute the answer. Semantic search makes this work even without keyword overlap: "is it worth paying more to live close to campus" should still land on the Riverside-vs-West-Campus chunks because the embeddings encode meaning, not exact words.
 
-**Production tradeoff reflection:**
+**Production tradeoff reflection:** If this served real users and cost weren't a constraint, I'd weigh:
+
+- **Accuracy on domain text:** `all-mpnet-base-v2` or an API model (OpenAI `text-embedding-3-small`, Cohere embed-v3) scores meaningfully higher on retrieval benchmarks. Student slang and building nicknames ("wampus", "the Block", "skyl*ft" censored on purpose) are where small models are most likely to miss.
+- **Context length:** API models accept 8K+ tokens, which would let me keep long multi-paragraph comments whole instead of splitting them.
+- **Latency and hosting:** a local model has no per-query network hop and no per-token cost, but an API model shifts ops burden off me. At this corpus size, latency differences are negligible; at 100K+ chunks I'd care about index/query speed.
+- **Multilingual support:** irrelevant here — the corpus is entirely English Reddit posts — so I'd deliberately not pay for it.
 
 ---
 
@@ -88,11 +104,11 @@ All sources are r/UTAustin threads (post + top comments), saved as plain-text fi
 
 | # | Question | Expected answer |
 |---|----------|-----------------|
-| 1 | | |
-| 2 | | |
-| 3 | | |
-| 4 | | |
-| 5 | | |
+| 1 | What do students say about living at 26 West? | Mixed but specific: walls are very thin and it's a loud building, and the 12-month lease forces you to pay for 2–3 summer months you may not use; on the plus side maintenance is quick (a resident's paint-speck issue was resolved fast) and residents say "it really isn't that bad." (Source: doc 03) |
+| 2 | Is it cheaper to live in Riverside with a car or West Campus without one? | The cheapest option is actually Riverside **without** a car — the bus to campus is free with a student ID. Between the two as asked, most students recommend West Campus with no car: the ~$250/month rent savings in Riverside is eaten by car costs, especially campus parking passes ($500–$700/year), plus gas and insurance; one commuter calculated ~$1,200/month all-in from Riverside with a car. (Source: doc 06) |
+| 3 | When should I sign a lease for the fall semester, and what happens if I sign too early? | Don't rush — units stay available through spring and summer, and late-season deals appear (one month free, free parking, reduced rent). Students report signing in April with no problems; a reasonable target is having housing sorted by spring break. Signing too early locks you in when subletting is nearly impossible (one commenter: almost impossible without a 50% discount). Counterpoint the system should surface: West Campus leases price in tiers, so the same unit can cost more later. (Sources: docs 10, 11) |
+| 4 | What rental or parking scams should students watch out for near West Campus? | The parking-boot operation near the Smoothie King by Castilian/Nueces: a worker waits for you to park and step off the property, then boots your car and charges ~$100 via a portable payment machine to remove it. It's reportedly technically legal (businesses hire the booter) and has happened for years at multiple lots in the area, so don't park in a business's lot if you're visiting a different business. (Source: doc 13) |
+| 5 | Is the Castilian a good housing option for sophomores? | Mostly no: it's described as ~98% freshmen, so commenters recommend against it for sophomores and suggest an apartment plus a meal plan instead. One resident's friend had elevators and laundry machines broken for months (and laundry costs extra), and rooms have no kitchen. The corpus contains one dissenting opinion ("plenty of sophomores live there, food better than J2") that a good answer may acknowledge. Bonus fact: current residents, not freshmen, get first pick of dorms. (Source: doc 05) |
 
 ---
 
@@ -102,9 +118,13 @@ All sources are r/UTAustin threads (post + top comments), saved as plain-text fi
      Consider: noisy or inconsistent documents, missing source attribution, off-topic
      retrieval, chunks that split key information across boundaries. -->
 
-1.
+1. **Noisy, off-topic comments polluting retrieval.** Document 01 contains a personal flame war with zero housing content, and many threads have `[score 1]` one-liners ("Thank you!", "Ha that's funny!"). Because I chunk per comment, each of these becomes its own chunk that could land in the top-5 and waste context slots. Mitigation to consider during implementation: skip chunks under a minimum length (~80 chars of comment text) and/or below a score threshold.
 
-2.
+2. **Comments are meaningless without their thread context.** The most informative comments rarely name the building or topic — "walls are thin as f***" only makes sense under the 26 West title. If the title-prepending step fails or is forgotten, retrieval for building-specific questions will silently degrade to near-random. I'll verify by spot-checking that a "26 West" query actually returns chunks from doc 03.
+
+3. **Stale information presented as current.** Threads span 2021–2024; prices ($500 parking pass vs $700 two years later) and building conditions change. The system can't fix this, but the generation prompt should require citing the post date alongside the source so users can judge freshness.
+
+4. **Conflicting opinions across chunks.** For the Castilian question the corpus contains both "don't live there" (score 9) and "it's great" (score -1). If retrieval surfaces only the minority view, the answer will be confidently wrong. Top-k=5 plus comment scores stored in metadata gives the LLM enough signal to weigh consensus, but this is a known failure mode to watch in evaluation.
 
 ---
 
@@ -115,6 +135,20 @@ All sources are r/UTAustin threads (post + top comments), saved as plain-text fi
      Label each stage with the tool or library you're using.
      You can use ASCII art, a Mermaid diagram, or embed a sketch as an image.
      You'll use this diagram as context when prompting AI tools to implement each stage. -->
+
+```mermaid
+flowchart LR
+    A["1 Document Ingestion<br/>documents/*.txt (13 r/UTAustin threads)<br/>Python: parse metadata header,<br/>post body, [score N] comments"]
+    B["2 Chunking<br/>custom chunk_text()<br/>1 chunk per comment, title prepended,<br/>1000-char cap / 100-char overlap"]
+    C["3 Embedding + Vector Store<br/>sentence-transformers all-MiniLM-L6-v2<br/>ChromaDB (persistent, cosine)<br/>metadata: source URL, date, score, category"]
+    D["4 Retrieval<br/>embed query with same model<br/>ChromaDB top-k = 5"]
+    E["5 Generation<br/>Groq API (Llama)<br/>grounded system prompt +<br/>source citations from metadata"]
+
+    A --> B --> C --> D --> E
+    Q([User question]) --> D
+```
+
+Build flow (stages 1–3) runs once via an ingest script; query flow (stages 4–5) runs per question through the query interface (Milestone 5).
 
 ---
 
@@ -130,8 +164,8 @@ All sources are r/UTAustin threads (post + top comments), saved as plain-text fi
      "I'll give Claude my Chunking Strategy section and ask it to implement chunk_text()
      with my specified chunk size and overlap" is a plan. -->
 
-**Milestone 3 — Ingestion and chunking:**
+**Milestone 3 — Ingestion and chunking:** I'll use Cursor (Claude). Input: the **Documents** and **Chunking Strategy** sections of this file plus one sample document (`04_regents-west-warning.txt`) so it sees the real header/`--- COMMENTS ---`/`[score N]` format. I'll ask it to implement `ingest.py` with two functions: `parse_document(path)` (returns metadata dict + post body + list of comments with scores) and `chunk_text(doc)` (per-comment chunks with title prefix, 1,000-char cap, 100-char overlap). Verification: run it over all 13 files, confirm the chunk count is ~250, and manually inspect 5 random chunks to check the title prefix is present and no chunk mixes two comments.
 
-**Milestone 4 — Embedding and retrieval:**
+**Milestone 4 — Embedding and retrieval:** Input: the **Retrieval Approach** section and the Architecture diagram. I'll ask Claude to implement `build_index.py` (embed all chunks with `all-MiniLM-L6-v2`, upsert into a persistent ChromaDB collection with source URL/date/score/category metadata) and a `retrieve(query, k=5)` function returning chunks with metadata and distances. Verification: run the 5 evaluation questions through `retrieve()` alone (before any LLM is involved) and check that each returns at least one chunk from the expected source document listed in the Evaluation Plan.
 
-**Milestone 5 — Generation and interface:**
+**Milestone 5 — Generation and interface:** Input: the **Evaluation Plan** section, the grounding requirements from the project instructions, and the `retrieve()` signature from Milestone 4. I'll ask Claude to write the grounded system prompt (answer only from provided context, cite source URL + post date, say "the documents don't cover this" when retrieval is empty/irrelevant) and a Gradio interface wiring query → retrieve → Groq. I'll write the first draft of the system prompt myself and have Claude critique it, rather than the reverse. Verification: run all 5 eval questions plus one deliberately out-of-domain question ("what's the best dining hall?") and confirm the system refuses the out-of-domain one instead of hallucinating.
