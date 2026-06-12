@@ -67,8 +67,9 @@ My documents are not continuous prose — they are Reddit threads where each com
 - **Prepend thread context to every chunk.** Each chunk is prefixed with the thread title and category (e.g. `[Skyloft review — is it a good place to live | review]`). This is critical: a comment like "walls are thin as f***, generally a loud place" never names the building — the building name only appears in the post title. Without this prefix, a query like "what do residents say about 26 West?" could never match that chunk.
 - **Cap at 1,000 characters** because all-MiniLM-L6-v2 truncates input at 256 tokens (~1,000 chars); anything past the cap would be silently invisible to search. The 100-char overlap means a fact straddling a split point survives intact in at least one chunk.
 - **Preprocessing:** the metadata header (title, source URL, post date, category) is stripped from the chunk text and stored as ChromaDB metadata instead, so source attribution survives without diluting the embedding.
+- **Minimum comment length: 50 characters** (after cleaning). Contextless one-liners ("Thank you!", "12", "Sent", emoji replies) become noise chunks that waste top-k slots, so they're dropped before chunking. I originally planned ~80 chars, but inspecting the dropped list during Milestone 3 showed 80 discarded eval-critical facts — "Castilian is 98% Freshman, don't live there if you're a sophomore" (65 chars) and several rent data points ("I live on Leon and 24th and pay $800 total monthly", 66 chars). At 50 chars those survive while pure phatic replies still get cut.
 
-Expected scale: 237 comments + 13 post bodies ≈ **~250 chunks** (a few long comments split into two).
+Actual scale (measured in Milestone 3): 237 comments parsed, 39 dropped by the length filter, long comments/post bodies split into parts → **222 chunks** (min 104 / avg 336 / max 983 chars).
 
 How I'd detect a bad choice: chunks too small → retrieved results are contextless one-liners ("This!", "Thank you!") that the LLM can't use; chunks too large → a single chunk mixes opinions about two different buildings and retrieval returns plausible-looking but mistargeted context.
 
@@ -118,7 +119,7 @@ How I'd detect a bad choice: chunks too small → retrieved results are contextl
      Consider: noisy or inconsistent documents, missing source attribution, off-topic
      retrieval, chunks that split key information across boundaries. -->
 
-1. **Noisy, off-topic comments polluting retrieval.** Document 01 contains a personal flame war with zero housing content, and many threads have `[score 1]` one-liners ("Thank you!", "Ha that's funny!"). Because I chunk per comment, each of these becomes its own chunk that could land in the top-5 and waste context slots. Mitigation to consider during implementation: skip chunks under a minimum length (~80 chars of comment text) and/or below a score threshold.
+1. **Noisy, off-topic comments polluting retrieval.** Document 01 contains a personal flame war with zero housing content, and many threads have `[score 1]` one-liners ("Thank you!", "Ha that's funny!"). Because I chunk per comment, each of these becomes its own chunk that could land in the top-5 and waste context slots. Mitigation (implemented in Milestone 3): skip comments under 50 characters of cleaned text — see Chunking Strategy for why 50 and not the originally planned ~80.
 
 2. **Comments are meaningless without their thread context.** The most informative comments rarely name the building or topic — "walls are thin as f***" only makes sense under the 26 West title. If the title-prepending step fails or is forgotten, retrieval for building-specific questions will silently degrade to near-random. I'll verify by spot-checking that a "26 West" query actually returns chunks from doc 03.
 

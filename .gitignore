@@ -12,6 +12,9 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
+# Derived artifacts (regenerate with `python ingest.py`)
+chunks.json
+
 # ChromaDB local storage
 chroma_db/
 chroma/
