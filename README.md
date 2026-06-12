@@ -88,7 +88,16 @@ All 13 sources are r/UTAustin threads (post + top comments) retrieved 2026-06-11
 
 **System prompt grounding instruction:**
 
+The system prompt in `query.py` frames grounding as hard constraints, not suggestions ("Hard rules — these are constraints, not suggestions"). The two load-bearing rules, verbatim:
+
+> 1. Every claim in your answer must be traceable to a specific provided excerpt. You must not use any knowledge from outside the excerpts, even if you are confident it is true and even if the excerpts seem incomplete.
+> 2. If the excerpts do not contain enough information to answer the question, reply with exactly: "I don't have enough information on that in the collected threads." — do not guess, do not answer from general knowledge, do not pad the refusal with generic advice.
+
+Three structural choices back the instruction up: (a) the grounding rule and the exact refusal string are **repeated in the user message** after the context block, because instructions only stated once at the top of a long prompt get diluted; (b) each retrieved chunk is passed as a numbered excerpt with a provenance header (filename, thread title, post date, comment score) and the model must end each claim with the excerpt number(s) it came from — an uncited sentence is defined as a rule violation; (c) when the best retrieval distance is ≥ 0.40 (the weak-retrieval threshold measured in Milestone 4), the prompt injects a warning that the excerpts may not actually cover the question, nudging the model toward refusal instead of stretching marginal context. Generation runs at temperature 0.2. Tested with the out-of-domain probe "What's the best dining hall on campus?" — the system returns the exact refusal sentence and no sources.
+
 **How source attribution is surfaced in the response:**
+
+Attribution is guaranteed programmatically, not delegated to the LLM. `ask()` returns a `sources` list built from the retrieved chunks' ChromaDB metadata — deduplicated `filename — thread title (posted date) — source URL` entries — which the Gradio UI displays in its own "Retrieved from" panel. The model is *additionally* instructed to cite excerpt numbers inline (so individual claims are traceable to specific comments), but even if it ignored that instruction entirely, the true source list would still appear. The one LLM-dependent piece: when the model refuses, `ask()` detects the refusal sentence and returns an empty source list, so a refusal is never decorated with sources it didn't use.
 
 ---
 
