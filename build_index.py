@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 import chromadb
+from chromadb.errors import NotFoundError
 from sentence_transformers import SentenceTransformer
 
 from ingest import load_chunks
@@ -59,7 +60,7 @@ def build_index() -> chromadb.Collection:
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
     try:
         client.delete_collection(COLLECTION_NAME)   # rebuild from scratch
-    except Exception:
+    except NotFoundError:
         pass
     collection = client.create_collection(
         name=COLLECTION_NAME,
@@ -97,8 +98,13 @@ def retrieve(query: str, k: int = TOP_K) -> list[dict]:
     Each result: {"text": str, "metadata": dict, "distance": float}
     (cosine distance: 0 = identical, lower = more similar).
     """
+    collection = get_collection()
+    if collection.count() == 0:
+        raise RuntimeError(
+            "Vector store is empty — build it first with: python build_index.py"
+        )
     query_embedding = get_model().encode([query])
-    results = get_collection().query(
+    results = collection.query(
         query_embeddings=query_embedding.tolist(),
         n_results=k,
         include=["documents", "metadatas", "distances"],

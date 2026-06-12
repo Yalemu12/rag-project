@@ -9,10 +9,7 @@
 
 ## Domain
 
-<!-- What topic or category of knowledge does your system cover?
-     Why is this knowledge valuable, and why is it hard to find through official channels?
-     Example: "Student reviews of CS professors at [university] — useful because official
-     course descriptions don't reflect teaching style, exam difficulty, or workload." -->
+**Off-campus housing experiences at UT Austin** — West Campus, Riverside, Hyde Park, and North Campus apartments, plus leasing timelines, pricing tradeoffs, and scams targeting students. This knowledge is valuable because apartment websites and leasing offices only show marketing material: they won't tell you which buildings have thin walls or broken elevators, whether Riverside's cheaper rent survives the cost of a car and a campus parking pass, or that leasing offices pressure students into signing in October when better deals appear in spring. The real answers live scattered across years of r/UTAustin threads, where students share firsthand experiences no official channel collects in one place.
 
 ---
 
@@ -22,18 +19,23 @@
      Be specific: include URLs, subreddit names, forum thread titles, or file names.
      Aim for variety — sources that together cover different subtopics or perspectives. -->
 
+All 13 sources are r/UTAustin threads (post + top comments) retrieved 2026-06-11 via the pullpush.io Reddit archive, saved as plain text in `documents/` with a metadata header (title, source URL, post date, retrieval date, category) used for source attribution.
+
 | # | Source | Type | URL or file path |
 |---|--------|------|-----------------|
-| 1 | | | |
-| 2 | | | |
-| 3 | | | |
-| 4 | | | |
-| 5 | | | |
-| 6 | | | |
-| 7 | | | |
-| 8 | | | |
-| 9 | | | |
-| 10 | | | |
+| 1 | West Campus studio/1bd recommendations | Reddit thread | `documents/01_west-campus-studio-1bd-recs.txt` — https://www.reddit.com/r/UTAustin/comments/z9fu0r/ |
+| 2 | Skyloft resident review | Reddit thread | `documents/02_skyloft-review.txt` — https://www.reddit.com/r/UTAustin/comments/sr5c3c/ |
+| 3 | 26 West — what residents wish they'd known | Reddit thread | `documents/03_26-west-what-to-know.txt` — https://www.reddit.com/r/UTAustin/comments/1bgj6yl/ |
+| 4 | Regents West on 26th — warning review | Reddit thread | `documents/04_regents-west-warning.txt` — https://www.reddit.com/r/UTAustin/comments/1iypq16/ |
+| 5 | The Castilian for sophomores | Reddit thread | `documents/05_castilian-sophomores.txt` — https://www.reddit.com/r/UTAustin/comments/t7hbqg/ |
+| 6 | Riverside w/ car vs West Campus w/o car cost comparison | Reddit thread | `documents/06_riverside-car-vs-west-campus.txt` — https://www.reddit.com/r/UTAustin/comments/qz1kan/ |
+| 7 | West Campus / Hyde Park under $850/month | Reddit thread | `documents/07_west-campus-hyde-park-under-850.txt` — https://www.reddit.com/r/UTAustin/comments/kamglp/ |
+| 8 | Freshman housing guidance (dorms vs apartments) | Reddit thread | `documents/08_freshman-housing-guidance.txt` — https://www.reddit.com/r/UTAustin/comments/180xpk0/ |
+| 9 | Why students sign overpriced West Campus high-rises | Reddit thread | `documents/09_overpriced-high-rises-west-campus.txt` — https://www.reddit.com/r/UTAustin/comments/wam3jy/ |
+| 10 | Leasing timeline: why signing too early costs money | Reddit thread | `documents/10_too-early-to-sign-lease.txt` — https://www.reddit.com/r/UTAustin/comments/kvcl8g/ |
+| 11 | Is it necessary to sign a lease this early? | Reddit thread | `documents/11_sign-lease-early-necessary.txt` — https://www.reddit.com/r/UTAustin/comments/1fq7bbv/ |
+| 12 | Gap between an old lease ending and a new one starting | Reddit thread | `documents/12_gap-between-leases.txt` — https://www.reddit.com/r/UTAustin/comments/14irges/ |
+| 13 | West Campus parking-boot scam incident | Reddit thread | `documents/13_roommate-scammed-west-campus.txt` — https://www.reddit.com/r/UTAustin/comments/lx4uxh/ |
 
 ---
 
@@ -46,13 +48,13 @@
      - Any preprocessing you did before chunking (e.g., stripping HTML, removing headers)
      - What your final chunk count was across all documents -->
 
-**Chunk size:**
+**Chunk size:** Structure-aware — one chunk per comment (and one per post body), capped at 1,000 characters. Comments over the cap are split at sentence boundaries.
 
-**Overlap:**
+**Overlap:** 100 characters, applied *only* when a single long comment/body is split across chunks. There is deliberately no overlap between separate comments: each comment is an independent opinion from a different person, and blending them would pollute both embeddings.
 
-**Why these choices fit your documents:**
+**Why these choices fit your documents:** Reddit threads aren't continuous prose — each comment is a self-contained opinion delimited by `[score N]` markers, so those markers are the natural split points (a fixed window would glue the tail of one person's opinion to the head of another's). Every chunk is prefixed with its thread title and category (e.g. `[Is the Castilian good for sophomores | review]`) because the most informative comments never name the building they're about — "walls are thin as f***" only makes sense under the 26 West title. The 1,000-char cap exists because all-MiniLM-L6-v2 truncates input at 256 tokens (~1,000 chars); anything past it would be invisible to search. Preprocessing: Reddit-markdown artifacts are stripped (`\-` escapes, `[text](url)` links, collapsed whitespace), the metadata header is moved out of the chunk text into vector-store metadata, and comments under 50 cleaned characters ("Thank you!", emoji replies) are dropped — the threshold was lowered from a planned 80 after inspection showed 80 discarded eval-critical facts like "Castilian is 98% Freshman, don't live there if you're a sophomore" (65 chars).
 
-**Final chunk count:**
+**Final chunk count:** 222 chunks across 13 documents (237 comments parsed, 39 dropped by the length filter; min 104 / avg 336 / max 983 chars). Reproduce with `python ingest.py`.
 
 ---
 
@@ -64,9 +66,14 @@
      Consider: context length limits, multilingual support, accuracy on domain-specific text,
      latency, and local vs. API-hosted. -->
 
-**Model used:**
+**Model used:** `all-MiniLM-L6-v2` via `sentence-transformers`, with embeddings stored in a persistent ChromaDB collection configured for **cosine** distance (ChromaDB defaults to squared L2, which would make distance thresholds hard to interpret). Chosen because the chunks are short, conversational English — exactly what MiniLM is trained on — and it runs locally with no API key or rate limits; the full 222-chunk corpus embeds in ~3 seconds. Retrieval is top-k = 5 (`retrieve()` in `build_index.py`), enough to surface multiple independent opinions on comparison questions without diluting context. Tested against all 5 evaluation queries before any LLM was wired in: each returns its expected source document at rank 1 with top distances of 0.12–0.40.
 
-**Production tradeoff reflection:**
+**Production tradeoff reflection:** If this served real users and cost weren't a constraint, I'd weigh:
+
+- **Accuracy on domain text:** `all-mpnet-base-v2` or an API model (OpenAI `text-embedding-3-small`, Cohere embed-v3) scores meaningfully higher on retrieval benchmarks. Student slang and building nicknames ("wampus", censored names like "skyl*ft") are where small models are most likely to miss — and Milestone 4 testing showed MiniLM is sensitive to query vocabulary (a query mentioning "rental scams" missed the parking-scam thread until the wording matched the corpus).
+- **Context length:** API models accept 8K+ tokens, which would let long multi-paragraph comments stay whole instead of being split at the 256-token truncation limit.
+- **Latency and hosting:** a local model has no per-query network hop and no per-token cost; an API model shifts ops burden off me. At ~250 chunks, latency is negligible either way; at 100K+ chunks index/query speed would start to matter.
+- **Multilingual support:** irrelevant here — the corpus is entirely English Reddit posts — so I'd deliberately not pay for it.
 
 ---
 
@@ -149,14 +156,14 @@
      chunk_text(). It returned a function using a fixed character split. I overrode the
      chunk size from 500 to 200 because my documents are short reviews, not long guides." -->
 
-**Instance 1**
+**Instance 1 — ingestion and chunking (Milestone 3)**
 
-- *What I gave the AI:*
-- *What it produced:*
-- *What I changed or overrode:*
+- *What I gave the AI:* The **Documents** and **Chunking Strategy** sections of `planning.md`, plus one real sample document (`04_regents-west-warning.txt`) so it could see the actual header / `--- COMMENTS ---` / `[score N]` format.
+- *What it produced:* `ingest.py` with `parse_document()`, `chunk_document()`, and `load_chunks()` — per-comment chunks with the thread-title prefix, 1,000-char cap, and 100-char overlap on splits, exactly per spec.
+- *What I changed or overrode:* The minimum-comment-length filter. The plan said ~80 characters, but inspecting the dropped-comment list showed 80 was discarding eval-critical facts ("Castilian is 98% Freshman, don't live there if you're a sophomore" — 65 chars), so it was lowered to 50, which still cuts pure phatic replies ("Thank you!").
 
-**Instance 2**
+**Instance 2 — embedding and retrieval (Milestone 4)**
 
-- *What I gave the AI:*
-- *What it produced:*
-- *What I changed or overrode:*
+- *What I gave the AI:* The **Retrieval Approach** section and the Mermaid architecture diagram from `planning.md`, plus the `load_chunks()` interface from Milestone 3.
+- *What it produced:* `build_index.py` — embeds all 222 chunks with `all-MiniLM-L6-v2` into a persistent ChromaDB collection (explicitly configured for cosine distance rather than ChromaDB's default L2) with full source metadata, and a `retrieve(query, k=5)` function returning chunks with metadata and distances.
+- *What I changed or overrode:* Retrieval testing before generation caught a bad evaluation question, not bad code: "What **rental** or parking scams…" retrieved generic West Campus apartment chunks because the corpus contains no rental-scam content. After verifying the index was healthy (focused phrasings returned the scam thread at distance ~0.27), the eval question was corrected to "What parking scams…", which its expected answer had described all along. Findings are documented in `planning.md` → "Milestone 4 findings".
